@@ -78,6 +78,9 @@ attributes:
     check_mode:
         description: Supports check_mode.
         support: full
+    diff_mode:
+        description: Supports diff mode.
+        support: full
 '''
 
 EXAMPLES = '''
