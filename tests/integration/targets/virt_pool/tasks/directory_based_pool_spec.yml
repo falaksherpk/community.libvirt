@@ -54,7 +54,7 @@
       - result_pre is changed
       - result is changed
       - result_post is not changed
-      - 'result.created == "{{ pool_spec_info.name }}"'
+      - 'result.created == pool_spec_info.name'
 
 #
 # Cross-check: the pool defined via 'spec' produces XML libvirt actually
@@ -71,7 +71,7 @@
 - name: "Ensure the spec-defined pool's real XML reflects the typed params"
   assert:
     that:
-      - "'type=\"dir\"' in spec_pool_xml.get_xml"
+      - "'type=\"dir\"' in spec_pool_xml.get_xml or \"type='dir'\" in spec_pool_xml.get_xml"
       - pool_spec_info.path in spec_pool_xml.get_xml
 
 #
