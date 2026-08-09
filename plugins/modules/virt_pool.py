@@ -50,12 +50,38 @@ options:
         description:
             - Pass additional parameters to 'build' or 'delete' commands.
         type: str
+    spec:
+        type: dict
+        version_added: '2.4.0'
+        description:
+            - Defines a storage pool as a set of fields instead of raw XML.
+            - This option is mutually exclusive with O(xml).
+            - Currently only O(spec.type=dir) is supported.
+            - Named O(spec) rather than O(pool) because O(pool) is already
+              taken as an existing alias of O(name).
+        suboptions:
+            type:
+                type: str
+                required: true
+                choices: [ dir ]
+                description:
+                    - The storage pool backend type.
+                    - Only V(dir) (a plain host-directory pool) is currently supported.
+            path:
+                type: str
+                required: true
+                description:
+                    - Host filesystem path used as the pool's target directory.
 extends_documentation_fragment:
     - community.libvirt.virt.options_uri
     - community.libvirt.virt.options_xml
     - community.libvirt.requirements
 requirements:
     - "python-lxml"
+attributes:
+    check_mode:
+        description: Supports check_mode.
+        support: full
 '''
 
 EXAMPLES = '''
@@ -131,7 +157,25 @@ EXAMPLES = '''
   community.libvirt.virt_pool:
     autostart: false
     name: vms
+
+- name: Define a new directory-based pool using typed params instead of xml
+  community.libvirt.virt_pool:
+    command: define
+    name: vms
+    spec:
+      type: dir
+      path: /var/lib/libvirt/images
+
+- name: Ensure a directory-based pool is present, using typed params
+  community.libvirt.virt_pool:
+    state: present
+    name: vms
+    spec:
+      type: dir
+      path: /var/lib/libvirt/images
 '''
+
+from dataclasses import dataclass
 
 try:
     import libvirt
@@ -148,6 +192,59 @@ else:
     HAS_XML = True
 
 from ansible.module_utils.basic import AnsibleModule
+
+
+# Backend types the typed 'pool' param currently supports. Kept separate from
+# ALL_MODES/etc below -- this is not a libvirt-level list, it's the subset of
+# pool types this module knows how to build XML for. New types should only be
+# added here once build_xml() below actually handles them.
+SUPPORTED_POOL_TYPES = ['dir']
+
+
+@dataclass
+class PoolElement:
+    """ Typed representation of a (currently: directory-based) libvirt
+    storage pool, and the one function that turns it into the XML libvirt
+    actually wants (https://libvirt.org/formatstorage.html).
+
+    Deliberately a plain dataclass with no behaviour beyond to_xmlstr() --
+    kept dependency-free and side-effect-free so it's testable without a
+    libvirt connection (see tests/unit/module_utils/test_virt_pool.py).
+    """
+    name: str
+    pool_type: str
+    path: str
+
+    def to_xmlstr(self) -> str:
+        """ Build the <pool> XML libvirt expects for this pool definition. """
+        if self.pool_type not in SUPPORTED_POOL_TYPES:
+            # main() already validates this via choices=, this is a second
+            # line of defence in case PoolElement is ever called directly.
+            raise ValueError(
+                "pool.type '%s' is not supported; supported types: %s"
+                % (self.pool_type, ', '.join(SUPPORTED_POOL_TYPES)))
+
+        pool_el = etree.Element('pool', type=self.pool_type)
+        name_el = etree.SubElement(pool_el, 'name')
+        name_el.text = self.name
+        target_el = etree.SubElement(pool_el, 'target')
+        path_el = etree.SubElement(target_el, 'path')
+        path_el.text = self.path
+        return etree.tostring(pool_el, encoding='unicode')
+
+
+def xml_from_pool_spec(name, spec_param):
+    """ Build a pool XML string from the typed 'spec' module param.
+
+    :param name: the pool's name (module's top-level 'name' param)
+    :param spec_param: dict -- the module's 'spec' param (already validated
+        by argument_spec's suboptions/choices)
+    """
+    element = PoolElement(
+        name=name,
+        pool_type=spec_param['type'],
+        path=spec_param['path'])
+    return element.to_xmlstr()
 
 
 VIRT_FAILED = 1
@@ -546,8 +643,17 @@ def core(module):
     command = module.params.get('command', None)
     uri = module.params.get('uri', None)
     xml = module.params.get('xml', None)
+    spec = module.params.get('spec', None)
     autostart = module.params.get('autostart', None)
     mode = module.params.get('mode', None)
+
+    # 'spec' and 'xml' are mutually exclusive (enforced in main()'s
+    # argument_spec), so at most one of these is set. If 'spec' was given,
+    # build the same xml string the rest of this function already expects --
+    # every existing code path below is untouched and keeps working exactly
+    # as before for xml= callers.
+    if spec is not None and xml is None:
+        xml = xml_from_pool_spec(name, spec)
 
     v = VirtStoragePool(uri, module)
     res = {}
@@ -661,14 +767,22 @@ def main():
 
     module = AnsibleModule(
         argument_spec=dict(
-            name=dict(aliases=['pool']),
+            name=dict(aliases=['pool']),  # unchanged from before this PR
             state=dict(choices=['active', 'inactive', 'present', 'absent', 'undefined', 'deleted']),
             command=dict(choices=ALL_COMMANDS),
             uri=dict(default='qemu:///system'),
             xml=dict(),
+            # Named 'spec', not 'pool' -- 'pool' is already taken above as an
+            # alias of 'name', and a dict param can't share a key with a
+            # string alias.
+            spec=dict(type='dict', options=dict(
+                type=dict(type='str', required=True, choices=SUPPORTED_POOL_TYPES),
+                path=dict(type='str', required=True),
+            )),
             autostart=dict(type='bool'),
             mode=dict(choices=ALL_MODES),
         ),
+        mutually_exclusive=[['xml', 'spec']],
         supports_check_mode=True
     )
 
