@@ -1,0 +1,140 @@
+---
+#
+# Typed 'dhcp_host' param for command=modify, run against the already
+# started 'foobar' network (defined earlier in main.yml, has a DHCP range
+# 192.168.125.2-254). Mirrors virt_secret's richer diff-assertion style
+# rather than directory_based_pool.yml's plainer pattern, since 'modify'
+# genuinely changes existing network state rather than a fresh define.
+#
+
+- name: "Add a new dhcp host via dhcp_host on check_mode(pre)"
+  community.libvirt.virt_net:
+    name: foobar
+    command: modify
+    dhcp_host:
+      mac: "FC:C2:33:00:6c:3c"
+      name: my_vm
+      ip: "192.168.125.30"
+  register: result_pre
+  check_mode: true
+
+- name: "Add a new dhcp host via dhcp_host"
+  community.libvirt.virt_net:
+    name: foobar
+    command: modify
+    dhcp_host:
+      mac: "FC:C2:33:00:6c:3c"
+      name: my_vm
+      ip: "192.168.125.30"
+  register: result
+
+- name: "Add the same dhcp host again via dhcp_host on check_mode(post)"
+  community.libvirt.virt_net:
+    name: foobar
+    command: modify
+    dhcp_host:
+      mac: "FC:C2:33:00:6c:3c"
+      name: my_vm
+      ip: "192.168.125.30"
+  register: result_post
+  check_mode: true
+
+- name: "Ensure the dhcp_host reservation was added and is idempotent"
+  assert:
+    that:
+      - result_pre is changed
+      - result is changed
+      - result_post is not changed
+
+#
+# Cross-check against the network's real, live XML -- proves
+# xml_from_dhcp_host_spec() produced a fragment libvirt actually accepted
+# and applied, not just that the module call succeeded.
+#
+- name: "Get XML of the foobar network after dhcp_host add"
+  community.libvirt.virt_net:
+    command: get_xml
+    name: foobar
+  register: foobar_xml_after_add
+
+- name: "Ensure the real network XML contains the dhcp_host reservation"
+  assert:
+    that:
+      - "'FC:C2:33:00:6c:3c' in foobar_xml_after_add.get_xml"
+      - "'192.168.125.30' in foobar_xml_after_add.get_xml"
+      - "'my_vm' in foobar_xml_after_add.get_xml"
+
+#
+# Update the same host's ip -- proves the typed path correctly detects a
+# genuine change (matching mac, different ip) same as the xml path already
+# does for its own equivalent case.
+#
+- name: "Update the dhcp_host's ip (change expected)"
+  community.libvirt.virt_net:
+    name: foobar
+    command: modify
+    dhcp_host:
+      mac: "FC:C2:33:00:6c:3c"
+      name: my_vm
+      ip: "192.168.125.31"
+  register: result
+
+- name: "Ensure changing the ip via dhcp_host was detected as a change"
+  assert:
+    that:
+      - result is changed
+
+- name: "Repeat the same update (no change expected)"
+  community.libvirt.virt_net:
+    name: foobar
+    command: modify
+    dhcp_host:
+      mac: "FC:C2:33:00:6c:3c"
+      name: my_vm
+      ip: "192.168.125.31"
+  register: result
+
+- name: "Ensure repeating the same dhcp_host update is idempotent"
+  assert:
+    that:
+      - result is not changed
+
+#
+# dhcp_host is only valid with command=modify -- confirm the module
+# actually rejects it elsewhere, rather than silently misbehaving on a
+# malformed <host/> fragment reaching a whole-document command.
+#
+- name: "Attempt dhcp_host with command=define (must fail)"
+  community.libvirt.virt_net:
+    name: foobar
+    command: define
+    dhcp_host:
+      mac: "AA:BB:CC:DD:EE:FF"
+      ip: "192.168.125.40"
+  register: misuse_result
+  ignore_errors: true
+
+- name: "Ensure dhcp_host with command=define is rejected"
+  assert:
+    that:
+      - misuse_result is failed
+
+#
+# xml= and dhcp_host= are mutually exclusive -- confirm both together is
+# rejected, not silently resolved by picking one.
+#
+- name: "Attempt to supply both xml and dhcp_host (must fail)"
+  community.libvirt.virt_net:
+    name: foobar
+    command: modify
+    xml: "<host mac='11:22:33:44:55:66' ip='192.168.125.50'/>"
+    dhcp_host:
+      mac: "11:22:33:44:55:66"
+      ip: "192.168.125.50"
+  register: conflict_result
+  ignore_errors: true
+
+- name: "Ensure xml+dhcp_host together is rejected"
+  assert:
+    that:
+      - conflict_result is failed

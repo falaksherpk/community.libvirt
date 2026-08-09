@@ -1,0 +1,169 @@
+---
+#
+# Directory-based pool, defined via the typed 'spec' parameter instead of
+# raw xml. Uses a different pool name/path than directory_based_pool.yml
+# so the two suites never collide if run in the same session.
+#
+
+- name: "Crean up working directory (spec)"
+  file:
+    path: /tmp/test_pool_spec
+    state: absent
+
+- name: "Create working directory (spec)"
+  file:
+    path: /tmp/test_pool_spec
+    mode: 0755
+    state: directory
+
+#
+# Define storage pool via 'spec'
+#
+- name: "Define {{ pool_spec_info.name }} via spec on check_mode(pre)"
+  community.libvirt.virt_pool:
+    state: present
+    name: "{{ pool_spec_info.name }}"
+    spec:
+      type: dir
+      path: "{{ pool_spec_info.path }}"
+  register: result_pre
+  check_mode: true
+
+- name: "Define {{ pool_spec_info.name }} via spec"
+  community.libvirt.virt_pool:
+    state: present
+    name: "{{ pool_spec_info.name }}"
+    spec:
+      type: dir
+      path: "{{ pool_spec_info.path }}"
+  register: result
+
+- name: "Define {{ pool_spec_info.name }} via spec on check_mode(post)"
+  community.libvirt.virt_pool:
+    state: present
+    name: "{{ pool_spec_info.name }}"
+    spec:
+      type: dir
+      path: "{{ pool_spec_info.path }}"
+  register: result_post
+  check_mode: true
+
+- name: "Ensure the {{ pool_spec_info.name }} has been defined via spec"
+  assert:
+    that:
+      - result_pre is changed
+      - result is changed
+      - result_post is not changed
+      - 'result.created == "{{ pool_spec_info.name }}"'
+
+#
+# Cross-check: the pool defined via 'spec' produces XML libvirt actually
+# accepted, and it matches what 'spec' asked for -- this is the real proof
+# that xml_from_pool_spec() built something libvirt understood, not just
+# that the module didn't crash.
+#
+- name: "Get XML of the spec-defined pool"
+  community.libvirt.virt_pool:
+    command: get_xml
+    name: "{{ pool_spec_info.name }}"
+  register: spec_pool_xml
+
+- name: "Ensure the spec-defined pool's real XML reflects the typed params"
+  assert:
+    that:
+      - "'type=\"dir\"' in spec_pool_xml.get_xml"
+      - pool_spec_info.path in spec_pool_xml.get_xml
+
+#
+# xml= and spec= are mutually exclusive -- confirm the module actually
+# rejects supplying both, rather than silently preferring one.
+#
+- name: "Attempt to supply both xml and spec (must fail)"
+  community.libvirt.virt_pool:
+    state: present
+    name: "{{ pool_spec_info.name }}_conflict"
+    xml: '{{ lookup("template", "test_pool.xml.j2") }}'
+    spec:
+      type: dir
+      path: "{{ pool_spec_info.path }}"
+  register: conflict_result
+  ignore_errors: true
+
+- name: "Ensure xml+spec together is rejected"
+  assert:
+    that:
+      - conflict_result is failed
+
+#
+# Activate / deactivate / delete -- same lifecycle as
+# directory_based_pool.yml, just against the spec-defined pool, to prove
+# a spec-defined pool behaves identically to an xml-defined one for every
+# other command.
+#
+- name: "Activate {{ pool_spec_info.name }} on check_mode(pre)"
+  community.libvirt.virt_pool:
+    state: active
+    name: "{{ pool_spec_info.name }}"
+  register: result_pre
+  check_mode: true
+
+- name: "Activate {{ pool_spec_info.name }}"
+  community.libvirt.virt_pool:
+    state: active
+    name: "{{ pool_spec_info.name }}"
+  register: result
+
+- name: "Activate {{ pool_spec_info.name }} on check_mode(post)"
+  community.libvirt.virt_pool:
+    state: active
+    name: "{{ pool_spec_info.name }}"
+  register: result_post
+  check_mode: true
+
+- name: "Ensure the {{ pool_spec_info.name }} has been active"
+  assert:
+    that:
+      - result_pre is changed
+      - result is changed and result.msg == 0
+      - result_post is not changed
+
+- name: "Dectivate {{ pool_spec_info.name }}"
+  community.libvirt.virt_pool:
+    state: inactive
+    name: "{{ pool_spec_info.name }}"
+  register: result
+
+- name: "Ensure the {{ pool_spec_info.name }} has been inactive"
+  assert:
+    that:
+      - result is changed and result.msg == 0
+
+#
+# Undefine storage pool
+#
+- name: "Delete {{ pool_spec_info.name }} on check_mode(pre)"
+  community.libvirt.virt_pool:
+    state: absent
+    name: "{{ pool_spec_info.name }}"
+  register: result_pre
+  check_mode: true
+
+- name: "Delete {{ pool_spec_info.name }}"
+  community.libvirt.virt_pool:
+    state: absent
+    name: "{{ pool_spec_info.name }}"
+  register: result
+
+- name: "Delete {{ pool_spec_info.name }} on check_mode(post)"
+  community.libvirt.virt_pool:
+    state: absent
+    name: "{{ pool_spec_info.name }}"
+  register: result_post
+  check_mode: true
+
+- name: "Ensure the {{ pool_spec_info.name }} has been deleted"
+  assert:
+    that:
+      - result_pre is changed
+      - result is changed and result.msg == 0
+      - result_post is not changed

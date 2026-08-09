@@ -46,6 +46,9 @@
         name: foobar
       register: virt_net_facts
 
+    - name: Test the typed dhcp_host parameter for command=modify
+      import_tasks: dhcp_host_modify.yml
+
     - name: Destroy the foobar network
       community.libvirt.virt_net:
         command: destroy

@@ -19,6 +19,9 @@
     - name: Test for a directory based pool
       import_tasks: directory_based_pool.yml
 
+    - name: Test for a directory based pool defined via typed 'spec' param
+      import_tasks: directory_based_pool_spec.yml
+
   always:
     - name: Stop libvirt
       service:

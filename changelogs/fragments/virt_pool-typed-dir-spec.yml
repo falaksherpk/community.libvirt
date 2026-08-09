@@ -1,0 +1,5 @@
+---
+minor_changes:
+  - virt_pool - add a typed ``spec`` parameter as an alternative to ``xml`` for
+    defining directory-based (``type=dir``) storage pools. ``xml`` continues to
+    work exactly as before; ``spec`` and ``xml`` are mutually exclusive.

@@ -1,0 +1,6 @@
+---
+minor_changes:
+  - virt_net - add a typed ``dhcp_host`` parameter as an alternative to ``xml``
+    for adding or updating a single DHCP host reservation via
+    ``command=modify``. ``xml`` continues to work exactly as before;
+    ``dhcp_host`` and ``xml`` are mutually exclusive.

@@ -2,3 +2,6 @@
 pool_info:
   name: test_pool
   path: /tmp/test_pool
+pool_spec_info:
+  name: test_pool_spec
+  path: /tmp/test_pool_spec
