@@ -45,12 +45,39 @@ options:
         type: bool
         description:
             - Specify if a given network should be started automatically on system boot.
+    dhcp_host:
+        type: dict
+        version_added: '2.4.0'
+        description:
+            - Defines a single DHCP host reservation as a set of fields instead of raw XML.
+            - Only valid together with O(command=modify) -- adds or updates one
+              DHCP host entry in the target network.
+            - This option is mutually exclusive with O(xml).
+        suboptions:
+            mac:
+                type: str
+                required: true
+                description:
+                    - MAC address of the DHCP host entry to add or update.
+            name:
+                type: str
+                description:
+                    - Hostname to associate with this DHCP host entry.
+            ip:
+                type: str
+                required: true
+                description:
+                    - IP address to assign to this DHCP host entry.
 extends_documentation_fragment:
     - community.libvirt.virt.options_uri
     - community.libvirt.virt.options_xml
     - community.libvirt.requirements
 requirements:
     - "python-lxml"
+attributes:
+    check_mode:
+        description: Supports check_mode.
+        support: full
 '''
 
 EXAMPLES = '''
@@ -122,6 +149,15 @@ EXAMPLES = '''
     name: br_nat
     command: modify
     xml: "<host mac='FC:C2:33:00:6c:3c' name='my_vm' ip='192.168.122.30'/>"
+
+- name: Add a new host in the dhcp pool using typed params instead of xml
+  community.libvirt.virt_net:
+    name: br_nat
+    command: modify
+    dhcp_host:
+      mac: "FC:C2:33:00:6c:3c"
+      name: my_vm
+      ip: "192.168.122.30"
 '''
 
 try:
@@ -140,6 +176,45 @@ else:
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.common.text.converters import to_native
+from dataclasses import dataclass
+
+
+@dataclass
+class DhcpHostElement:
+    """ Typed representation of a single <host> DHCP reservation entry
+    (https://libvirt.org/formatnetwork.html), and the function that turns
+    it into the XML fragment virt_net's modify() command expects.
+
+    Deliberately a plain dataclass with no behaviour beyond to_xmlstr() --
+    kept dependency-free and side-effect-free so it's testable without a
+    libvirt connection (see tests/unit/modules/test_virt_net.py). Mirrors
+    plugins/modules/virt_pool.py's PoolElement.
+    """
+    mac: str
+    ip: str
+    name: str = None
+
+    def to_xmlstr(self) -> str:
+        """ Build the <host .../> XML fragment modify() parses via
+        etree.fromstring() and dispatches on tag == 'host'. """
+        attrs = {'mac': self.mac, 'ip': self.ip}
+        if self.name:
+            attrs['name'] = self.name
+        host_el = etree.Element('host', **attrs)
+        return etree.tostring(host_el, encoding='unicode')
+
+
+def xml_from_dhcp_host_spec(dhcp_host_param):
+    """ Build a <host .../> XML fragment from the typed 'dhcp_host' param.
+
+    :param dhcp_host_param: dict -- the module's 'dhcp_host' param (already
+        validated by argument_spec's suboptions)
+    """
+    element = DhcpHostElement(
+        mac=dhcp_host_param['mac'],
+        ip=dhcp_host_param['ip'],
+        name=dhcp_host_param.get('name'))
+    return element.to_xmlstr()
 
 
 VIRT_FAILED = 1
@@ -497,7 +572,19 @@ def core(module):
     command = module.params.get('command', None)
     uri = module.params.get('uri', None)
     xml = module.params.get('xml', None)
+    dhcp_host = module.params.get('dhcp_host', None)
     autostart = module.params.get('autostart', None)
+
+    # 'dhcp_host' and 'xml' are mutually exclusive (enforced in main()'s
+    # argument_spec). 'dhcp_host' only makes sense with command=modify --
+    # a bare <host/> fragment is not a valid whole-network document, so
+    # guard against it reaching 'define' or any other command.
+    if dhcp_host is not None:
+        if command != 'modify':
+            module.fail_json(
+                msg="dhcp_host is only valid together with command=modify")
+        if xml is None:
+            xml = xml_from_dhcp_host_spec(dhcp_host)
 
     v = VirtNetwork(uri, module)
     res = {}
@@ -605,8 +692,14 @@ def main():
             command=dict(choices=ALL_COMMANDS),
             uri=dict(default='qemu:///system'),
             xml=dict(),
+            dhcp_host=dict(type='dict', options=dict(
+                mac=dict(type='str', required=True),
+                name=dict(type='str'),
+                ip=dict(type='str', required=True),
+            )),
             autostart=dict(type='bool')
         ),
+        mutually_exclusive=[['xml', 'dhcp_host']],
         supports_check_mode=True,
         required_if=[
             ('command', 'create', ['name']),
