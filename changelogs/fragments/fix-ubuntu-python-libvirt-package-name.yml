@@ -1,7 +1,0 @@
----
-bugfixes:
-  - virt_pool, virt_net - fix Ubuntu 20.04 test fixtures referencing the
-    nonexistent ``python-libvirt`` package name (should be
-    ``python3-libvirt``), and add the missing ``libvirt-daemon-system``
-    package to virt_net's default package list so libvirtd's systemd unit
-    is actually installed.
